@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: 测试 (Go ${{ matrix.go }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        go: ["1.22.x", "stable"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+      - run: go build ./...
+      - run: go vet ./...
+      - name: 测试（含竞态检测）
+        run: go test -race ./...
+      - name: 核心包覆盖率
+        run: go test -covermode=atomic -coverprofile=coverage.out .
+      - name: 输出覆盖率
+        run: go tool cover -func=coverage.out | tail -n 1
+
+  lint:
+    name: 静态检查
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - uses: golangci-lint-action@v6
+        with:
+          version: latest
+
+  fuzz:
+    name: 模糊测试
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - run: go test -run=^$ -fuzz=FuzzConvert -fuzztime=60s .
+
+  generated-up-to-date:
+    name: 生成数据与源数据一致
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - run: go generate ./...
+      - name: 检查生成文件是否已提交最新版本
+        run: git diff --exit-code -- dict_data.go phrase_data.go

@@ -1,0 +1,5 @@
+# 一律以 LF 检出并入库。
+#
+# cmd/gendata 与 gofmt 都写 LF，而 Windows 默认 core.autocrlf=true 会按 CRLF 检出，
+# 导致 gofmt -l 把每个 .go 文件都报成未格式化、CI 的生成数据比对也会失真。
+* text=auto eol=lf

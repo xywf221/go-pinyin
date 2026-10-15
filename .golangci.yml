@@ -1,0 +1,54 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - dupl
+    - gocritic
+    - goconst
+    - godot
+    - misspell
+    - nakedret
+    - nolintlint
+    - prealloc
+    - revive
+    - unconvert
+    - unparam
+    - whitespace
+  settings:
+    dupl:
+      threshold: 150
+    godot:
+      scope: declarations
+      period: true
+    revive:
+      rules:
+        - name: exported
+          arguments:
+            - disableStutteringCheck
+  exclusions:
+    rules:
+      # 生成的数据表不做风格检查。
+      - path: (dict|phrase)_data\.go
+        linters:
+          - dupl
+          - lll
+          - godot
+          - goconst
+      - path: _test\.go
+        linters:
+          - dupl
+          - goconst
+      # styleNames 本身就是风格名的唯一来源，把名字再抽成常量只会绕远路。
+      - path: style\.go
+        linters:
+          - goconst
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
