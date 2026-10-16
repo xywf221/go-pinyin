@@ -109,3 +109,23 @@
 生发: shēng fā        # 生发 shēngfā，滋生发展
 半间不界: bàn gān bù gà   # 同「尴尬」，间 gān、界 gà
 不间不界: bù gān bù gà
+
+# ── 第二批：汉典与 CC-CEDICT 一致、且都推翻上游基准表的条目 ─────────────
+#
+# 这一批是用 cmd/audit 交叉比对挖出来的：两个来源都独立给出同一个读音，而上游的
+# pinyin.txt 基准表给的是另一个。上游的 overwrite.txt（项目自己维护的手工表）里
+# 没有这些条目，也就是说上游的读数在这两处都没有依据。复核方法见 README「交叉比对」。
+哀乐: āi yuè              # 哀乐 āiyuè，丧葬乐曲
+心惊胆颤: xīn jīng dǎn chàn   # 同「心惊胆战」，颤 chàn
+歌仔戏: gē zǎi xì         # 歌仔戏 gēzǎixì，台湾戏曲
+芥蓝: gài lán             # 芥蓝 gàilán，蔬菜
+荤粥: xūn yù              # 荤粥 Xūnyù，匈奴的别称
+倒栽葱: dào zāi cōng      # 倒 dào，头朝下地栽
+坑蒙拐骗: kēng mēng guǎi piàn   # 蒙 mēng，蒙骗
+曲肱而枕: qū gōng ér zhěn      # 曲 qū，弯曲
+红彤彤: hóng tōng tōng
+舍车保帅: shě jū bǎo shuài     # 舍 shě，舍弃
+钉牢: dīng láo            # 钉 dīng，用钉子钉
+登场: dēng chǎng          # 登场 dēngchǎng，演员上场
+上行: shàng xíng          # 上行 shàngxíng，向上行进
+混水摸鱼: hún shuǐ mō yú       # 同「浑水摸鱼」，混 hún

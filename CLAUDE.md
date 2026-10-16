@@ -27,6 +27,9 @@ go test -run XXX -bench . -benchmem .        # 基准测试
 go test -run XXX -fuzz FuzzConvert -fuzztime 60s .
 golangci-lint run                 # 配置见 .golangci.yml
 go generate ./...                 # 重新生成 dict_data.go 与 phrase_data.go
+
+go run ./cmd/audit -ref 汉典=_research/phrase/zdic_cibs.txt \
+                   -ref CC-CEDICT=_research/phrase/cc_cedict.txt   # 交叉比对，需自备参考数据
 ```
 
 CI（`.github/workflows/ci.yml`）会跑：build、vet、`-race`、覆盖率、golangci-lint、60s 模糊测试，以及一步 `generated-up-to-date`——重新 `go generate` 后 `git diff --exit-code -- dict_data.go phrase_data.go`。
@@ -69,7 +72,7 @@ CI（`.github/workflows/ci.yml`）会跑：build、vet、`-race`、覆盖率、g
 
 ### 为什么收录整张表而不是例外集
 
-`phraseBlob` 收了源表全部 411946 条，其中只有 40141 条读音与逐字默认读音不同。看起来只存这 40141 条能省 90% 空间，但不行：
+`phraseBlob` 收了源表全部 411946 条，其中只有 40150 条读音与逐字默认读音不同。看起来只存这 40150 条能省 90% 空间，但不行：
 
 正向最大匹配是逐字前进的，一个没被收录的词组会被更短的词组从中间切开，而「被切开」的判定又依赖另一条词组是否被收录，例外集必须一路补到几乎整张表才闭合——实测覆盖完整词表的 **98.4%**。省下的不到 2%，却要多维护一套容易出错的补集规则，而且「隆重庆祝」这类词边界巧合仍会出错。整表收录换来与「对完整词组表做最大匹配」逐字一致。
 
@@ -95,6 +98,33 @@ func matchPhrase(s string, start int) (n int, readings string)
 
 一/不 的变调、真异读、轻声书写差异、姓氏**有意不收**，理由写在 `phrase_overrides.txt` 头部与 README 的「词组人工校订」一节。
 
+### 上游血缘：谁才是独立证人
+
+`data/phrase_pinyin.txt` 出自 `mozillazg/phrase-pinyin-data`，它的 `merge.py` 按
+
+```text
+zdic_cibs  zdic_cybs  cc_cedict  di  pinyin  overwrite
+```
+
+的顺序合并，**后出现的文件覆盖先出现的**。三个直接后果，决定了这个仓库里能相信谁：
+
+- `zdic_cibs` / `zdic_cybs`（汉典）虽然是上游的输入，但它们的读数可能已被后面两张表盖掉，**对本仓库不是独立证人**。
+- `overwrite.txt` 是上游自己维护的 866 条手工表，没有准入记录，实测混有错误（`标识: biāo shí`、`掌掴: zhǎng guó`、`好强: hǎo qiáng`），却压过汉典与 CC-CEDICT。
+- 真正独立的是汉典与 CC-CEDICT 的**原始表**，但它们的票只是「值得复核」的信号，**推翻不了**已被覆盖的读数。
+
+`cmd/audit` 就干这件事：逐字位比对，把差异归成四类，只有 A、B 值得动手。
+
+| 类别 | 含义 | 与 `phrase_overrides.txt` 的关系 |
+| --- | --- | --- |
+| A | 声母或韵母不同 | 错误候选，第二批校订全部来自这里 |
+| B | 仅声调不同 | 错误候选，但异读、方言里常见，要逐个判断 |
+| C | 轻声标注差异（`玻璃 bō lí` / `bō li`） | 标注惯例，不算错 |
+| D | 一/不 的变调 | 本库按变调输出，不算错 |
+
+输出按「类别严重度、得票数、词组」排序，`-min-agree 2` 只留「至少两个来源一致反对我们」的条目——这是信噪比最高的一档。
+
+**它不在 CI 里跑，也不要接进去**：参考数据不能随仓库分发（CC-CEDICT 是 CC BY-SA 4.0，汉典授权不明），路径一律靠 `-ref 名称=路径` 从命令行传入，`_research/` 已在 `.gitignore` 里。
+
 ## 测试约定
 
 - **核心包语句覆盖率要求 100%**，加分支时要一并补测试。
@@ -103,7 +133,7 @@ func matchPhrase(s string, start int) (n int, readings string)
 - 词组数据有两道独立验证，缺一不可：
   - `TestPhraseDictionaryAccuracy` 逐条核对单个词组（411944 条）。
   - `TestPhraseMatchesFullTableFMM` 拿随机拼接的句子与「对完整词表做最大匹配」的参照实现对比。单条核对**发现不了**词组连排时的跳转问题（「隆重庆祝」里的「重庆」），所以必须保留这道。
-  - 这两道都拿源表当基准，因此都要先套上 `phraseOverrideReadings(t)`，否则 75 条被校订的词组会全部「对不上」。加新的源表比对测试时同理。
+  - 这两道都拿源表当基准，因此都要先套上 `phraseOverrideReadings(t)`，否则 89 条被校订的词组会全部「对不上」。加新的源表比对测试时同理。
 - 词组校订另有两道：`TestPhraseOverridesApplied`（端到端，唯一能锁住「校订回单字默认读音」的条目）与 `TestPhraseOverridesAreLoadBearing`（没有死条目）。
 - `.golangci.yml` 对 `dict_data.go` / `phrase_data.go` 关掉了 dupl、lll、godot、goconst；`style.go` 关掉了 goconst（`styleNames` 本身就是风格名的唯一来源）。
 
