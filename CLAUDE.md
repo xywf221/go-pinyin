@@ -40,7 +40,7 @@ CI（`.github/workflows/ci.yml`）会跑：build、vet、`-race`、覆盖率、g
 | 文件 | 大小 | 来源 | 生成逻辑 |
 | --- | --- | --- | --- |
 | `dict_data.go` | 1.3MB | `data/pinyin.txt` + `data/kMandarin_8105.txt` + `data/overrides.txt` | `cmd/gendata` 的 `emit` |
-| `phrase_data.go` | 4.5MB | `data/phrase_pinyin.txt` | `cmd/gendata` 的 `buildPhrases` + `emitPhrases` |
+| `phrase_data.go` | 4.5MB | `data/phrase_pinyin.txt` + `data/phrase_overrides.txt` | `cmd/gendata` 的 `buildPhrases` + `applyPhraseOverrides` + `emitPhrases` |
 
 改数据或改生成逻辑后**必须**跑 `go generate ./...` 并提交结果，否则 CI 会红。生成是确定性的（测试断言过）。
 
@@ -83,11 +83,17 @@ func matchPhrase(s string, start int) (n int, readings string)
 
 ## 数据质量闸门
 
-`cmd/gendata` 写文件前会拒绝异常数据并终止生成：空读音、重复读音、非规范音节、人工校订的码点与注释不符、校订读音不在该字读音列表里。
+`cmd/gendata` 写文件前会拒绝异常数据并终止生成：空读音、重复读音、非规范音节、人工校订的码点与注释不符、单字校订的读音不在该字读音列表里、词组校订的词组不在源表中、词组校订的音节数与字数不符、词组校订的读音与源表相同（说明源表已经修好，这条校订该删了）。
 
 词组表里不合格的行会被跳过并按原因分类统计（生成日志里会打印），源表中读音互相矛盾的重复词组（如「朝阳」既是 `zhāo yáng` 又是 `cháo yáng`）逐条列出。当前源表 411958 行里有 12 行属于此类。
 
-`data/overrides.txt` 是人工校订表，准入标准严格：**汉典 zdic.net、现代汉语词典(kXHC1983)、通用规范汉字字典(kTGHZ2013) 三方一致**，且能在常用词中验证。`重`、`长`、`行` 这类各来源本身分歧的字被**有意排除**——它们的问题是词组层面的，交给词组消歧。
+`data/overrides.txt` 是单字校订表，准入标准严格：**汉典 zdic.net、现代汉语词典(kXHC1983)、通用规范汉字字典(kTGHZ2013) 三方一致**，且能在常用词中验证。`重`、`长`、`行` 这类各来源本身分歧的字被**有意排除**——它们的问题是词组层面的，交给词组消歧。
+
+`data/phrase_overrides.txt` 是词组校订表，修的是上游词组表对多音字词义区分的成片遗漏（`朴` 在 8 个词里被当成姓氏音 piáo，`差` 在 17 个词里被当成 chà，`骨`、`重` 同理）。它比单字表宽松——不要求读音出现在某个字的读音列表里，「秦桧」的 `huì`、「半间不界」的 `gà` 都是整词层面的读法——但结构校验一样严：词组必须在源表中存在、音节数与字数一致、音节规范、且校订后的读音确实与源表不同，否则终止生成。
+
+词组校订有个陷阱：**校订回单字默认读音的条目在 `phrase_data.go` 里不留痕迹**（读音字段被清空，运行时按单字补齐），光看生成数据分辨不出校订是生效了还是被丢弃了。根目录的 `TestPhraseOverridesApplied` 因此逐条比对 `Convert` 的输出，这才是唯一能锁住这类条目的地方；改 `applyPhraseOverrides` 时别把它删掉。
+
+一/不 的变调、真异读、轻声书写差异、姓氏**有意不收**，理由写在 `phrase_overrides.txt` 头部与 README 的「词组人工校订」一节。
 
 ## 测试约定
 
@@ -97,6 +103,8 @@ func matchPhrase(s string, start int) (n int, readings string)
 - 词组数据有两道独立验证，缺一不可：
   - `TestPhraseDictionaryAccuracy` 逐条核对单个词组（411944 条）。
   - `TestPhraseMatchesFullTableFMM` 拿随机拼接的句子与「对完整词表做最大匹配」的参照实现对比。单条核对**发现不了**词组连排时的跳转问题（「隆重庆祝」里的「重庆」），所以必须保留这道。
+  - 这两道都拿源表当基准，因此都要先套上 `phraseOverrideReadings(t)`，否则 75 条被校订的词组会全部「对不上」。加新的源表比对测试时同理。
+- 词组校订另有两道：`TestPhraseOverridesApplied`（端到端，唯一能锁住「校订回单字默认读音」的条目）与 `TestPhraseOverridesAreLoadBearing`（没有死条目）。
 - `.golangci.yml` 对 `dict_data.go` / `phrase_data.go` 关掉了 dupl、lll、godot、goconst；`style.go` 关掉了 goconst（`styleNames` 本身就是风格名的唯一来源）。
 
 ## 性能现状

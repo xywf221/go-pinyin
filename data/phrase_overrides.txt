@@ -1,0 +1,111 @@
+# 人工校订的词组读音
+#
+# 背景：data/phrase_pinyin.txt 来自 mozillazg/phrase-pinyin-data，读音大多正确，
+# 但多音字的词义区分有成片的遗漏。「朴」「差」「骨」这类整族错误，以及
+# 「漯河 tà hé」与同表「漯河市 luò hé shì」自相矛盾的条目，都属于这一类。
+#
+# 收录标准（三条同时满足）：
+#   1. 校订后的读音是《现代汉语词典》意义上的唯一标准读法；
+#   2. 该读音确实属于该字（见 dict_data.go 里该字的读音列表）；
+#   3. 能在常用词中验证（见每条的说明）。
+#
+# 有意不收录的情况：
+#   - 一/不 的变调（一刀两断 yì dāo、不对 bú duì 之类）。源表按变调标注，
+#     本库也按变调输出，两边都对，不是错误；与 CC-CEDICT「一 一律标 yī」的
+#     差异属标注惯例。
+#   - 真正的异读（上调 shàngdiào/shàngtiáo、供养 gòngyǎng/gōngyǎng、
+#     斗牛 dòuniú/dǒuniú、运转 之外的 卷 juàn/juǎn 等）：各词典分歧，保持原样。
+#   - 轻声的书写差异（豆腐 dòu fu 写成 dòu fǔ 之类）：属标注惯例。
+#   - 姓氏（单 shàn、仇 qiú、解 xiè 等）：源表基本都按常用音处理，本库不做姓氏
+#     识别，改用词表覆盖不现实，留待调用方自行处理。
+#
+# 每条都会被 cmd/gendata 严格校验：词组必须在源表中存在、音节数与字数一致、
+# 音节规范、且校订后的读音确实与源表不同。任何一条不满足都会终止生成，
+# 避免校订表悄悄失效。
+#
+# 格式：词组: 读音 读音 ...  # 说明
+
+# ── 朴：朴素、朴实义的 pǔ，被整族误作姓氏音 piáo ──────────────────────
+古朴: gǔ pǔ        # 古朴 gǔpǔ
+简朴: jiǎn pǔ      # 简朴 jiǎnpǔ
+勤朴: qín pǔ       # 勤朴 qínpǔ
+拙朴: zhuō pǔ      # 拙朴 zhuōpǔ
+纯朴: chún pǔ      # 纯朴 chúnpǔ
+质朴: zhì pǔ       # 质朴 zhìpǔ
+诚朴: chéng pǔ     # 诚朴 chéngpǔ
+素朴: sù pǔ        # 素朴 sùpǔ
+
+# ── 差：差数、差别义的 chā，被整族误作「差劲」义的 chà ────────────────
+温差: wēn chā      # 温差 wēnchā
+方差: fāng chā     # 方差 fāngchā
+级差: jí chā       # 级差 jíchā
+时差: shí chā      # 时差 shíchā
+落差: luò chā      # 落差 luòchā
+逆差: nì chā       # 逆差 nìchā
+等差: děng chā     # 等差 děngchā
+等差级数: děng chā jí shù
+均差: jūn chā      # 均差 jūnchā
+平均差: píng jūn chā
+反差: fǎn chā      # 反差 fǎnchā
+视差: shì chā      # 视差 shìchā
+种差: zhǒng chā    # 种差 zhǒngchā，逻辑学的「种差」
+岁差: suì chā      # 岁差 suìchā，天文学
+差失: chā shī      # 差失 chāshī
+差误: chā wù       # 差误 chāwù
+外差: wài chā      # 外差 wàichā，无线电
+
+# ── 重：重复、再次义的 chóng ─────────────────────────────────────────
+重结晶: chóng jié jīng   # 化学的「重结晶」
+重设: chóng shè          # 重设 chóngshè，重新设置
+重楼: chóng lóu          # 重楼 chónglóu，中药名
+
+# ── 骨：骨头、骨头的 gǔ，被误作口语变读 gú ──────────────────────────
+骨头架子: gǔ tou jià zi
+吃人不吐骨头: chī rén bù tǔ gǔ tou
+皮包骨头: pí bāo gǔ tou
+贱骨头: jiàn gǔ tou
+老骨头: lǎo gǔ tou
+软骨头: ruǎn gǔ tou
+
+# ── 单条 ─────────────────────────────────────────────────────────────
+漯河: luò hé          # 漯河 Luòhé，与同表「漯河市 luò hé shì」自相矛盾
+秦桧: qín huì         # 秦桧 Qín Huì；桧 guì 只用于桧树
+相片: xiàng piàn      # 相片 xiàngpiàn
+照片: zhào piàn       # 照片 zhàopiàn
+掌掴: zhǎng guāi      # 掴 guāi；guó 是旧读
+空位: kōng wèi        # 空位 kōngwèi，空着的位子
+偏好: piān hào        # 偏好 piānhào，爱好义的 hào
+好强: hào qiáng       # 好强 hàoqiáng，争强好胜
+好辩: hào biàn        # 好辩 hàobiàn
+好奇尚异: hào qí shàng yì
+一打: yī dá           # 一打 yī dá，十二个；打 dá 是量词
+肚子: dù zi           # 肚子 dùzi；dǔ 只用于「猪肚子」这类
+一肚子: yī dù zi
+褪去: tuì qù          # 褪去 tuìqù
+说客: shuì kè         # 说客 shuìkè
+睥睨: bì nì           # 睥睨 bìnì
+暴晒: bào shài        # 暴晒 bàoshài
+标识: biāo zhì        # 标识 biāozhì，同「标志」
+寻思: xún sī          # 寻思 xúnsi
+不遂: bù suì          # 不遂 bùsuì，不如愿
+运转: yùn zhuǎn       # 运转 yùnzhuǎn，转动
+毛遂: máo suì         # 毛遂 Máo Suì，人名
+含宫咀徵: hán gōng jǔ zhǐ    # 徵 zhǐ 是五音「宫商角徵羽」之一
+含商咀徵: hán shāng jǔ zhǐ
+薪给: xīn jǐ          # 薪给 xīnjǐ，给 jǐ 义为供给
+电磨: diàn mò         # 电磨 diànmò，磨 mò 指磨具
+磨豆腐: mò dòu fǔ     # 磨豆腐 mò，研磨
+辈分: bèi fèn         # 辈分 bèifèn
+本本分分: běn běn fèn fèn
+出处: chū chù         # 出处 chūchù，来源
+无处: wú chù          # 无处 wúchù
+犯得上: fàn de shàng  # 犯得上 fàndeshàng，得读轻声
+少不得: shǎo bù dé    # 少不得 shǎobudé
+少不了: shǎo bù liǎo  # 少不了 shǎobuliǎo
+散发: sàn fā          # 散发 sànfā，发出、分发
+夹克: jiā kè          # 夹克 jiākè；jiá 是夹袄的夹
+发夹: fà jiā          # 发夹 fàjiā，头发的发读 fà
+不粘锅: bù zhān guō   # 不粘锅 bùzhānguō，粘 zhān 义为附着
+生发: shēng fā        # 生发 shēngfā，滋生发展
+半间不界: bàn gān bù gà   # 同「尴尬」，间 gān、界 gà
+不间不界: bù gān bù gà

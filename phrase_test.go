@@ -267,13 +267,18 @@ func TestPhraseDictionaryAccuracy(t *testing.T) {
 		t.Errorf("源表中读音冲突的重复词组多达 %d 个，需要人工复核", len(conflicting))
 	}
 
+	overrides := phraseOverrideReadings(t)
 	checked, bad := 0, 0
 	for _, e := range entries {
 		if conflicting[e.phrase] {
 			continue
 		}
 		checked++
-		want := strings.Join(e.readings, "")
+		readings := e.readings
+		if o, ok := overrides[e.phrase]; ok {
+			readings = strings.Fields(o)
+		}
+		want := strings.Join(readings, "")
 		if got := Convert(e.phrase, Tone); got != want {
 			bad++
 			if bad <= 10 {
@@ -402,6 +407,10 @@ func TestPhraseMatchesFullTableFMM(t *testing.T) {
 		if n := utf8.RuneCountInString(e.phrase); n > maxRunes {
 			maxRunes = n
 		}
+	}
+	// 参照实现同样要套上人工校订，否则 75 条被校订过的词组会「对不上」。
+	for phrase, readings := range phraseOverrideReadings(t) {
+		table[phrase] = readings
 	}
 
 	rng := rand.New(rand.NewSource(20261015))

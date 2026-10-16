@@ -2,9 +2,14 @@
 //
 // 数据源（均来自 github.com/mozillazg，MIT 协议）：
 //
-//	data/pinyin.txt          合并表，含多音字的全部读音
-//	data/kMandarin_8105.txt  《通用规范汉字表》(2013) 8105 字的最常用读音
-//	data/phrase_pinyin.txt   词组读音表，用于词组消歧
+//	data/pinyin.txt            合并表，含多音字的全部读音
+//	data/kMandarin_8105.txt    《通用规范汉字表》(2013) 8105 字的最常用读音
+//	data/phrase_pinyin.txt     词组读音表，用于词组消歧
+//
+// 人工校订（本仓库自己维护，不来自上游）：
+//
+//	data/overrides.txt         单个汉字的默认读音
+//	data/phrase_overrides.txt  单个词组的读音
 //
 // 生成规则：
 //  1. 收录范围：CJK 扩展 A + 统一表意文字（U+3400–U+9FFF），外加《通用规范汉字表》
@@ -13,6 +18,7 @@
 //  3. 若该字在《通用规范汉字表》中有校准读音，则把它调整到首位。
 //  4. 词组表整表收录，运行时对完整词组表做正向最大匹配。只有读音与逐字默认读音
 //     不同的词组才写入读音，其余留空，由运行时按单字读音补齐。
+//  5. 两张校订表最后覆盖，覆盖前逐条校验，任何一条失效都终止生成。
 //
 // 用法：
 //
@@ -42,6 +48,9 @@ const (
 	phraseOut    = "phrase_data.go"
 	phraseSource = "data/phrase_pinyin.txt"
 
+	// phraseOverrideSource 是人工校订的词组读音表，见该文件头部说明。
+	phraseOverrideSource = "data/phrase_overrides.txt"
+
 	// unknownVersion 是数据源头部缺少 "# version:" 时的占位值。
 	unknownVersion = "unknown"
 
@@ -52,6 +61,18 @@ const (
 	// phraseChunkRecords 是 phraseBlob 字面量每行打包的记录条数。
 	// 整表拼成的字符串近 5MB，拆成多行既便于 diff，也避免出现十几万字符的超长单行。
 	phraseChunkRecords = 1024
+)
+
+// 词组行被跳过的原因。同时用作生成日志与测试里的统计键，因此抽成常量。
+const (
+	reasonNoColon     = "缺少冒号"
+	reasonTooShort    = "不足两字"
+	reasonTooLong     = "词组过长"
+	reasonFieldCount  = "音节数与字数不符"
+	reasonUnknownRune = "含未收录字"
+	reasonBadSyllable = "非规范音节"
+	reasonDupSame     = "重复词组（读音相同）"
+	reasonDupConflict = "重复词组（读音冲突）"
 )
 
 func main() {
@@ -111,11 +132,20 @@ func main() {
 	fmt.Printf("  人工校订      : %d\n", overridden)
 	fmt.Printf("  规范音节数    : %d\n", syllable.Count())
 
+	phraseOverrides, err := parsePhraseOverrides(phraseOverrideSource)
+	if err != nil {
+		fatal(err)
+	}
 	phrases, st, err := buildPhrases(merged, phraseSource)
 	if err != nil {
 		fatal(err)
 	}
-	if err := emitPhrases(phrases, sourceVersion(phraseSource)); err != nil {
+	st.overridden, err = applyPhraseOverrides(phrases, merged, phraseOverrides)
+	if err != nil {
+		fatal(err)
+	}
+	tallyPhrases(phrases, st)
+	if err := emitPhrases(phrases, sourceVersion(phraseSource), st.overridden); err != nil {
 		fatal(err)
 	}
 	phraseVersion := sourceVersion(phraseSource)
@@ -125,6 +155,7 @@ func main() {
 	fmt.Printf("  收录词组      : %d（最长 %d 字）\n", st.kept, st.maxRunes)
 	fmt.Printf("    其中消歧例外: %d\n", st.excepted)
 	fmt.Printf("    读音同单字  : %d\n", st.same)
+	fmt.Printf("    人工校订    : %d\n", st.overridden)
 	fmt.Printf("  跳过          : %d\n", st.skipped)
 	st.report()
 }
@@ -385,12 +416,13 @@ type phraseEntry struct {
 
 // phraseStats 汇总词组表的处理情况，供生成日志与人工审计使用。
 type phraseStats struct {
-	total    int // 源文件中的数据行数
-	kept     int // 写入 phrase_data.go 的词组数
-	excepted int // 其中读音与逐字默认读音不同的
-	same     int // 其中读音与逐字默认读音相同的
-	skipped  int // 因数据异常被跳过的行数
-	maxRunes int // 收录词组中的最大字数
+	total      int // 源文件中的数据行数
+	kept       int // 写入 phrase_data.go 的词组数
+	excepted   int // 其中读音与逐字默认读音不同的
+	same       int // 其中读音与逐字默认读音相同的
+	overridden int // 其中被 data/phrase_overrides.txt 改过读音的
+	skipped    int // 因数据异常被跳过的行数
+	maxRunes   int // 收录词组中的最大字数
 
 	conflicts []string // 源表中重复出现且读音互相矛盾的行
 
@@ -428,6 +460,108 @@ func (st *phraseStats) report() {
 	}
 	for _, c := range st.conflicts {
 		fmt.Printf("    ! 源表读音冲突：%s\n", c)
+	}
+}
+
+// phraseOverride 是一条人工校订的词组读音。
+type phraseOverride struct {
+	phrase   string
+	readings string // 空格分隔的带声调音节
+}
+
+// parsePhraseOverrides 解析 "词组: 读音 读音 ...  # 说明" 形式的校订行。
+//
+// 与 data/overrides.txt 不同，这里的校订针对的是词组而不是单个汉字，因此不要求读音
+// 出现在某个字的读音列表里——「秦桧」的桧读 huì、「半间不界」的界读 gà，都是整词
+// 层面的读法，单个字未必收得到。
+func parsePhraseOverrides(path string) (map[string]phraseOverride, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+
+	out := make(map[string]phraseOverride)
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for n := 1; sc.Scan(); n++ {
+		line := sc.Text()
+		body, _, _ := strings.Cut(line, "#")
+		body = strings.TrimSpace(body)
+		if body == "" {
+			continue
+		}
+		phrase, rest, ok := strings.Cut(body, ":")
+		phrase = strings.TrimSpace(phrase)
+		fields := strings.Fields(rest)
+		if !ok || phrase == "" || len(fields) == 0 {
+			return nil, fmt.Errorf("%s:%d 格式应为 \"词组: 读音\": %q", path, n, line)
+		}
+		if _, dup := out[phrase]; dup {
+			return nil, fmt.Errorf("%s:%d 词组 %q 重复校订", path, n, phrase)
+		}
+		out[phrase] = phraseOverride{phrase: phrase, readings: strings.Join(fields, " ")}
+	}
+	return out, sc.Err()
+}
+
+// applyPhraseOverrides 把校订读音写回词组表，返回实际改动的条数。
+//
+// 每条校订都要过四道校验，任何一道不过都终止生成：
+//  1. 词组必须在源表中存在，否则是永远不生效的死条目；
+//  2. 音节数必须与字数一致；
+//  3. 每个音节去掉声调后都必须是规范音节；
+//  4. 校订后的读音必须与源表不同，否则这条校订已经失效。
+//
+// 第 4 条是安全网：源表升级到已经修正了该读音时，生成会直接失败，逼着人把这条
+// 校订删掉，而不是留一条「看起来收录了其实没生效」的死条目。
+//
+// 校订后的读音若恰好等于逐字默认读音，条目的读音字段会被清空、改由运行时按单字补齐
+// ——「古朴」正是这种情况（朴 的单字默认读音本来就是 pǔ，源表却在词组里给了 piáo）。
+// 这不算异常，但会让「校订有没有真的生效」变得不易察觉，因此核心库那边有一道
+// 端到端测试逐条比对 Convert 的输出，见根目录的 phrase_override_test.go。
+func applyPhraseOverrides(entries []phraseEntry, dict map[rune][]string, overrides map[string]phraseOverride) (int, error) {
+	index := make(map[string]int, len(entries))
+	for i, e := range entries {
+		index[e.phrase] = i
+	}
+	changed := 0
+	for phrase, o := range overrides {
+		i, ok := index[phrase]
+		if !ok {
+			return 0, fmt.Errorf("%s: 词组 %q 不在源表中，校订不会生效", phraseOverrideSource, phrase)
+		}
+		fields := strings.Fields(o.readings)
+		runes := []rune(phrase)
+		if len(fields) != len(runes) {
+			return 0, fmt.Errorf("%s: %q 有 %d 个字，却给了 %d 个读音",
+				phraseOverrideSource, phrase, len(runes), len(fields))
+		}
+		for _, p := range fields {
+			if !syllable.Valid(tone.Base(p)) {
+				return 0, fmt.Errorf("%s: %q 的读音 %q 去掉声调后不在规范音节清单中",
+					phraseOverrideSource, phrase, p)
+			}
+		}
+		if o.readings == entries[i].readings {
+			return 0, fmt.Errorf("%s: %q 的校订读音与源表相同，该条已失效", phraseOverrideSource, phrase)
+		}
+		entries[i].readings = o.readings
+		entries[i].differs = phraseDiffers(runes, fields, dict)
+		changed++
+	}
+	return changed, nil
+}
+
+// tallyPhrases 统计词组表中读音与逐字默认读音不同（即需要写入读音字段）的条数。
+// 它必须在 applyPhraseOverrides 之后调用，否则校订过的条目仍按源表计数。
+func tallyPhrases(entries []phraseEntry, st *phraseStats) {
+	for _, e := range entries {
+		if e.differs {
+			st.excepted++
+		} else {
+			st.same++
+		}
 	}
 }
 
@@ -472,22 +606,22 @@ func buildPhrases(dict map[rune][]string, path string) ([]phraseEntry, *phraseSt
 
 		colon := strings.IndexByte(line, ':')
 		if colon < 0 {
-			st.skip("缺少冒号", line)
+			st.skip(reasonNoColon, line)
 			continue
 		}
 		phrase := strings.TrimSpace(line[:colon])
 		fields := strings.Fields(line[colon+1:])
 		runes := []rune(phrase)
 		if len(runes) < 2 {
-			st.skip("不足两字", phrase)
+			st.skip(reasonTooShort, phrase)
 			continue
 		}
 		if len(fields) != len(runes) {
-			st.skip("音节数与字数不符", line)
+			st.skip(reasonFieldCount, line)
 			continue
 		}
 		if len(runes) > maxPhraseRunes {
-			st.skip("词组过长", phrase)
+			st.skip(reasonTooLong, phrase)
 			continue
 		}
 		if prev, dup := seen[phrase]; dup {
@@ -495,9 +629,9 @@ func buildPhrases(dict map[rune][]string, path string) ([]phraseEntry, *phraseSt
 			// 保留先出现的一条，并逐条列出来供人工核对。
 			readings := strings.Join(fields, " ")
 			if prev == readings {
-				st.skip("重复词组（读音相同）", phrase)
+				st.skip(reasonDupSame, phrase)
 			} else {
-				st.skip("重复词组（读音冲突）", phrase)
+				st.skip(reasonDupConflict, phrase)
 				st.conflicts = append(st.conflicts, fmt.Sprintf("%s: %q 与 %q", phrase, prev, readings))
 			}
 			continue
@@ -507,14 +641,14 @@ func buildPhrases(dict map[rune][]string, path string) ([]phraseEntry, *phraseSt
 		bad := ""
 		for _, r := range runes {
 			if _, ok := dict[r]; !ok {
-				bad = "含未收录字"
+				bad = reasonUnknownRune
 				break
 			}
 		}
 		if bad == "" {
 			for _, p := range fields {
 				if !syllable.Valid(tone.Base(p)) {
-					bad = "非规范音节"
+					bad = reasonBadSyllable
 					break
 				}
 			}
@@ -538,11 +672,6 @@ func buildPhrases(dict map[rune][]string, path string) ([]phraseEntry, *phraseSt
 		return nil, nil, fmt.Errorf("%s: 没有解析出任何词组，数据文件格式可能已变化", path)
 	}
 	for _, e := range all {
-		if e.differs {
-			st.excepted++
-		} else {
-			st.same++
-		}
 		if n := utf8.RuneCountInString(e.phrase); n > st.maxRunes {
 			st.maxRunes = n
 		}
@@ -590,7 +719,7 @@ func phraseDiffers(runes []rune, fields []string, dict map[rune][]string) bool {
 //
 // 记录按「前两个字、字数从多到少」排列，运行时 phraseIndex 依赖这个顺序把同一个
 // 前两字的词组收进同一个桶。
-func emitPhrases(entries []phraseEntry, sourceVersion string) error {
+func emitPhrases(entries []phraseEntry, sourceVersion string, overrideCount int) error {
 	var b bytes.Buffer
 	b.WriteString("// Code generated by cmd/gendata from data/phrase_pinyin.txt; DO NOT EDIT.\n")
 	b.WriteString("//\n")
@@ -598,6 +727,7 @@ func emitPhrases(entries []phraseEntry, sourceVersion string) error {
 	b.WriteString("// 收录源表整表，因此与「对完整词组表做正向最大匹配」逐字一致。\n")
 	b.WriteString("// 每条记录是「词组|读音|」，读音为空表示逐字默认读音就是对的。\n")
 	fmt.Fprintf(&b, "// 词组数：%d，最长 %d 字。\n", len(entries), maxRunesOf(entries))
+	fmt.Fprintf(&b, "// 人工校订：%d 条，见 data/phrase_overrides.txt\n", overrideCount)
 	b.WriteString("// 按「前两个字、字数从多到少」排列，顺序与 phraseIndex 的分桶方式对应。\n\n")
 	b.WriteString("package pinyin\n\n")
 
